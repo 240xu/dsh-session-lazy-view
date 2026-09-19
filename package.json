@@ -1,0 +1,32 @@
+{
+  "name": "@240xu/dsh-session-lazy-view",
+  "version": "0.1.0",
+  "description": "DSH web plugin: read-only lazy session viewer. Lists ~/.dsh/sessions (stat-only) and peeks at the last N zstd frames of any session artifact without decompressing the whole file.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./frames": {
+      "default": "./lib/frames.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "author": "240xu",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "package.json"
+  ]
+}

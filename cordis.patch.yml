@@ -1,0 +1,4 @@
+# dsh-session-lazy-view bundle patch: mounts the plugin as one cordis loader entry.
+- insert:
+    - id: dsh-session-lazy-view
+      name: '@240xu/dsh-session-lazy-view'

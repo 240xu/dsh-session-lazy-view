@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Lazy View</title>
+<style>
+	:root { color-scheme: dark; }
+	body { font: 13px/1.5 ui-monospace, monospace; margin: 0; padding: 16px; background: #11151c; color: #d7dde6; }
+	h1 { font-size: 16px; margin: 0 0 12px; }
+	h2 { font-size: 13px; margin: 18px 0 6px; color: #8ab4f8; }
+	table { border-collapse: collapse; width: 100%; }
+	td, th { padding: 3px 8px; border-bottom: 1px solid #232a35; text-align: left; white-space: nowrap; }
+	.big { color: #f28b82; font-weight: 700; }
+	.fmt { color: #81c995; }
+	button { background: #2a3342; color: #d7dde6; border: 1px solid #3a465a; border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+	button:hover { background: #37435a; }
+	.frame { background: #161b24; border: 1px solid #232a35; border-radius: 6px; margin: 8px 0; padding: 8px 12px; }
+	.frame .meta { color: #9aa0a6; font-size: 11px; }
+	.ev { margin: 6px 0; padding-left: 8px; border-left: 2px solid #3a465a; white-space: pre-wrap; word-break: break-word; }
+	.ev .role { color: #fdd663; font-weight: 700; }
+	.ev .ty { color: #8ab4f8; }
+	.err { color: #f28b82; }
+	#status { color: #9aa0a6; margin: 8px 0; }
+	details { margin: 4px 0; }
+	summary { cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>dsh-session-lazy-view <span class="fmt">read-only</span></h1>
+<div id="status">loading…</div>
+<div id="root"></div>
+<script>
+const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+async function api(path) {
+	const res = await fetch(path);
+	const body = await res.json();
+	if (!body.ok) throw new Error(body.error?.code + ": " + body.error?.message);
+	return body.value;
+}
+
+function renderFrame(frame) {
+	if (frame.error) return `<div class="frame err">frame #${frame.index} @${frame.start}: ${esc(frame.error)}</div>`;
+	const events = (frame.events || []).map(ev =>
+		`<div class="ev"><span class="role">${esc(ev.role)}</span> <span class="ty">${esc(ev.type)}/${esc(ev.kind)}</span> ${esc(ev.text)}</div>`
+	).join("");
+	const headerLine = frame.header ? ` <span class="meta">${esc(frame.header.id ?? "")}</span>` : "";
+	return `<div class="frame"><div class="meta">frame #${frame.index} · bytes ${frame.start}–${frame.end}${headerLine}</div>${events}</div>`;
+}
+
+async function showTail(path, skip, container) {
+	container.innerHTML = "<div id='status'>decompressing tail…</div>";
+	try {
+		const value = await api(`/lazyview/api/tail?path=${encodeURIComponent(path)}&frames=2&skip=${skip}`);
+		container.innerHTML =
+			`<div><button data-prev="1">← 上一页（更早 2 帧）</button> <span class="meta">file size ${fmtBytes(value.size)}</span></div>` +
+			(value.frames.length ? value.frames.map(renderFrame).join("") : "<div class='meta'>no readable frames</div>");
+		container.querySelector("[data-prev]").addEventListener("click", () => showTail(path, skip + 2, container));
+	} catch (error) {
+		container.innerHTML = `<div class="err">${esc(error.message)}</div>`;
+	}
+}
+
+(async () => {
+	const status = document.getElementById("status");
+	const root = document.getElementById("root");
+	try {
+		const { projects } = await api("/lazyview/api/list");
+		const total = projects.reduce((n, p) => n + p.sessions.length, 0);
+		status.textContent = `${projects.length} projects · ${total} sessions`;
+		for (const { project, sessions } of projects) {
+			const rows = sessions.map(s => {
+				const sizeCell = s.big ? `<td class="big">${fmtBytes(s.bytes)}</td>` : `<td>${fmtBytes(s.bytes)}</td>`;
+				return `<tr><td>${esc(s.sessionId)}</td><td class="fmt">${esc(s.format)}</td>${sizeCell}<td>${new Date(s.mtime).toLocaleString()}</td>` +
+					`<td><button data-path="${esc(s.path)}">tail</button></td></tr>`;
+			}).join("");
+			const section = document.createElement("details");
+			section.innerHTML = `<summary><h2 style="display:inline">${esc(project)} (${sessions.length})</h2></summary>` +
+				`<table><tr><th>session</th><th>format</th><th>size</th><th>mtime</th><th></th></tr>${rows}</table><div class="tail"></div>`;
+			section.querySelector("summary").addEventListener("click", () => { /* details toggles natively */ });
+			for (const btn of section.querySelectorAll("[data-path]")) {
+				btn.addEventListener("click", () => {
+					let tail = btn.closest("tr").parentElement.parentElement.nextElementSibling;
+					if (!tail || !tail.classList.contains("tail")) { tail = document.createElement("div"); tail.className = "tail"; btn.closest("table").after(tail); }
+					showTail(btn.dataset.path, 0, tail);
+				});
+			}
+			root.appendChild(section);
+		}
+		status.textContent = "";
+	} catch (error) {
+		status.innerHTML = `<span class="err">${esc(error.message)}</span>`;
+	}
+})();
+</script>
+</body>
+</html>
