@@ -19,10 +19,19 @@ DSH web 插件：**会话惰性查看器**（纯只读）。列出 `~/.dsh/sessi
 `@deepseek-ai/schemastery` 由 DSH profile 树自带，无需安装）。
 
 ```bash
-# 方式 A：npm 安装（装进 profile 树，schemastery 由 profile 自带）
-cd ~/.dsh/profiles/web/node_modules && npm i @240xu/dsh-session-lazy-view
+# 方式 A（推荐）：DSH 官方插件命令（内部走 pnpm，正确登记 lockfile 与 bundles）
+dsh plugin --profile web add @240xu/dsh-session-lazy-view
 
-# 方式 B：从源码拷贝
+# 方式 B：npm pack 直解（profile 是 pnpm workspace，不要在 profile 内直接 npm i ——
+# workspace 根的 link:/ 依赖会让 npm 报 EUNSUPPORTEDPROTOCOL）
+cd ~/.dsh/profiles/web/node_modules
+npm pack @240xu/dsh-session-lazy-view
+mkdir -p @240xu/dsh-session-lazy-view
+tar -xzf 240xu-dsh-session-lazy-view-*.tgz -C @240xu/dsh-session-lazy-view --strip-components=1
+# 然后把 "@240xu/dsh-session-lazy-view" 加进 profile package.json 的
+# dsh.profile.bundles 列表（lockfile/package-map 不一致时 pnpm install 会补齐）
+
+# 方式 C：从源码拷贝（开发）
 git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-lazy-view ~/.dsh/profiles/web/node_modules/
 ```
 
