@@ -24,6 +24,9 @@
 	#status { color: #9aa0a6; margin: 8px 0; }
 	details { margin: 4px 0; }
 	summary { cursor: pointer; }
+	/* 惰性加载状态条：贴在会话内容顶部，滚到顶时可见 */
+	.topbar { position: sticky; top: 0; z-index: 1; background: #11151c; padding: 4px 0; color: #9aa0a6; font-size: 11px; }
+	.topbar.loading { color: #fdd663; }
 </style>
 </head>
 <body>
@@ -33,6 +36,8 @@
 <script>
 const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
 const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+// 首屏与每批帧数：8 帧足够铺满手机一屏；服务端 MAX_FRAMES=20 是硬上限
+const BATCH = 8;
 
 async function api(path) {
 	const res = await fetch(path);
@@ -47,21 +52,88 @@ function renderFrame(frame) {
 		`<div class="ev"><span class="role">${esc(ev.role)}</span> <span class="ty">${esc(ev.type)}/${esc(ev.kind)}</span> ${esc(ev.text)}</div>`
 	).join("");
 	const headerLine = frame.header ? ` <span class="meta">${esc(frame.header.id ?? "")}</span>` : "";
-	return `<div class="frame"><div class="meta">frame #${frame.index} · bytes ${frame.start}–${frame.end}${headerLine}</div>${events}</div>`;
+	return `<div class="frame" data-fidx="${frame.index}"><div class="meta">frame #${frame.index} · bytes ${frame.start}–${frame.end}${headerLine}</div>${events}</div>`;
 }
 
-async function showTail(path, skip, container) {
-	container.innerHTML = "<div id='status'>decompressing tail…</div>";
-	try {
-		const value = await api(`/lazyview/api/tail?path=${encodeURIComponent(path)}&frames=2&skip=${skip}`);
-		container.innerHTML =
-			`<div><button data-prev="1">← 上一页（更早 2 帧）</button> <span class="meta">file size ${fmtBytes(value.size)}</span></div>` +
-			(value.frames.length ? value.frames.map(renderFrame).join("") : "<div class='meta'>no readable frames</div>");
-		container.querySelector("[data-prev]").addEventListener("click", () => showTail(path, skip + 2, container));
-	} catch (error) {
-		container.innerHTML = `<div class="err">${esc(error.message)}</div>`;
+/**
+ * 一个已打开会话的惰性状态。显示按时间正序（旧上新下，与 Trajectory 一致）：
+ * 服务端按"从文件尾倒数"给帧（index 0 = 最新），我们反转后正序渲染；
+ * 首屏渲染后滚到最新；用户滚近顶部时自动预载更早一批并锚定视口。
+ * 手动按钮保留作兜底（滚动监听失效的场景，如老浏览器）。
+ */
+function openSession(path, container) {
+	const state = { path, container, skip: 0, oldestLoaded: null, loading: false, exhausted: false };
+	const topbar = document.createElement("div");
+	topbar.className = "topbar";
+	topbar.innerHTML = `<span class="hint">loading…</span> <button data-prev style="display:none">↑ 加载更早</button>`;
+	container.innerHTML = "";
+	container.appendChild(topbar);
+	const list = document.createElement("div");
+	container.appendChild(list);
+
+	const hint = topbar.querySelector(".hint");
+	const prevBtn = topbar.querySelector("[data-prev]");
+	const setHint = (text, loading) => { hint.textContent = text; topbar.classList.toggle("loading", !!loading); };
+
+	async function loadOlder() {
+		if (state.loading || state.exhausted) return;
+		state.loading = true;
+		prevBtn.style.display = "none";
+		setHint(`loading earlier frames (skip=${state.skip})…`, true);
+		try {
+			const value = await api(`/lazyview/api/tail?path=${encodeURIComponent(path)}&frames=${BATCH}&skip=${state.skip}`);
+			// 时间正序渲染：服务端 newest-first，反转后 append 到内容最前面
+			const chrono = value.frames.slice().reverse();
+			if (chrono.length < BATCH) state.exhausted = true;
+			if (!chrono.length && state.skip === 0) {
+				setHint("no readable frames", false);
+				return;
+			}
+			// 视口锚定：记录当前最顶帧的视口位置，prepend 后补偿滚动量
+			const first = list.firstElementChild;
+			const anchorTop = first ? first.getBoundingClientRect().top : null;
+			const html = chrono.map(renderFrame).join("");
+			list.insertAdjacentHTML("afterbegin", html);
+			if (anchorTop !== null) {
+				const delta = list.firstElementChild.getBoundingClientRect().top - anchorTop;
+				if (delta > 0) window.scrollBy(0, delta);
+			}
+			state.skip += BATCH;
+			const oldest = chrono[0];
+			state.oldestLoaded = oldest.index;
+			if (state.exhausted) {
+				setHint(`已到文件头（共 ${fmtBytes(value.size)}，最早 frame #${oldest.index}）`, false);
+				prevBtn.style.display = "none";
+			} else {
+				setHint(`file ${fmtBytes(value.size)} · 最早已载入 frame #${oldest.index} · 滚到顶部自动加载更早`, false);
+				prevBtn.style.display = "";
+			}
+		} catch (error) {
+			setHint(`error: ${error.message}`, false);
+			prevBtn.style.display = "";
+		} finally {
+			state.loading = false;
+		}
 	}
+
+	prevBtn.addEventListener("click", loadOlder);
+	// 首屏：载入最新 BATCH 帧，然后滚到内容底部（最新），用户往上翻即触发预载
+	loadOlder().then(() => {
+		container.scrollIntoView({ block: "start" });
+		const scroller = document.scrollingElement;
+		scroller.scrollTop = scroller.scrollHeight;
+	});
+	openSession.active = state;
 }
+
+// 滚动监听：仅作用于最近打开的会话（调试面板场景足够），顶部 120px 内触发预载
+window.addEventListener("scroll", () => {
+	const state = openSession.active;
+	if (!state || state.loading || state.exhausted) return;
+	const bar = state.container.querySelector(".topbar");
+	if (!bar) return;
+	if (bar.getBoundingClientRect().top <= 120) state.container.querySelector("[data-prev]").click();
+}, { passive: true });
 
 (async () => {
 	const status = document.getElementById("status");
@@ -69,27 +141,25 @@ async function showTail(path, skip, container) {
 	try {
 		const { projects } = await api("/lazyview/api/list");
 		const total = projects.reduce((n, p) => n + p.sessions.length, 0);
-		status.textContent = `${projects.length} projects · ${total} sessions`;
+		status.textContent = `${projects.length} projects · ${total} sessions · 点击 session 打开（新窗口语义：打开即看最新，滚到顶部自动加载更早）`;
 		for (const { project, sessions } of projects) {
 			const rows = sessions.map(s => {
 				const sizeCell = s.big ? `<td class="big">${fmtBytes(s.bytes)}</td>` : `<td>${fmtBytes(s.bytes)}</td>`;
 				return `<tr><td>${esc(s.sessionId)}</td><td class="fmt">${esc(s.format)}</td>${sizeCell}<td>${new Date(s.mtime).toLocaleString()}</td>` +
-					`<td><button data-path="${esc(s.path)}">tail</button></td></tr>`;
+					`<td><button data-path="${esc(s.path)}">打开</button></td></tr>`;
 			}).join("");
 			const section = document.createElement("details");
 			section.innerHTML = `<summary><h2 style="display:inline">${esc(project)} (${sessions.length})</h2></summary>` +
-				`<table><tr><th>session</th><th>format</th><th>size</th><th>mtime</th><th></th></tr>${rows}</table><div class="tail"></div>`;
-			section.querySelector("summary").addEventListener("click", () => { /* details toggles natively */ });
+				`<table><tr><th>session</th><th>format</th><th>size</th><th>mtime</th><th></th></tr>${rows}</table>`;
 			for (const btn of section.querySelectorAll("[data-path]")) {
 				btn.addEventListener("click", () => {
-					let tail = btn.closest("tr").parentElement.parentElement.nextElementSibling;
-					if (!tail || !tail.classList.contains("tail")) { tail = document.createElement("div"); tail.className = "tail"; btn.closest("table").after(tail); }
-					showTail(btn.dataset.path, 0, tail);
+					let tail = section.querySelector(":scope > .tail");
+					if (!tail) { tail = document.createElement("div"); tail.className = "tail"; section.appendChild(tail); }
+					openSession(btn.dataset.path, tail);
 				});
 			}
 			root.appendChild(section);
 		}
-		status.textContent = "";
 	} catch (error) {
 		status.innerHTML = `<span class="err">${esc(error.message)}</span>`;
 	}

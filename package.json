@@ -1,6 +1,6 @@
 {
   "name": "@240xu/dsh-session-lazy-view",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH web plugin: read-only lazy session viewer. Lists ~/.dsh/sessions (stat-only) and peeks at the last N zstd frames of any session artifact without decompressing the whole file.",
   "type": "module",
   "main": "lib/index.js",
