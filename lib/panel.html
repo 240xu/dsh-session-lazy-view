@@ -24,9 +24,10 @@
 	#status { color: #9aa0a6; margin: 8px 0; }
 	details { margin: 4px 0; }
 	summary { cursor: pointer; }
-	/* 惰性加载状态条：贴在会话内容顶部，滚到顶时可见 */
-	.topbar { position: sticky; top: 0; z-index: 1; background: #11151c; padding: 4px 0; color: #9aa0a6; font-size: 11px; }
+	/* 惰性加载状态条：普通块，不做 sticky（sticky 几何会干扰滚动判定） */
+	.topbar { background: #11151c; padding: 4px 0; color: #9aa0a6; font-size: 11px; }
 	.topbar.loading { color: #fdd663; }
+	.sentinel { height: 1px; }
 </style>
 </head>
 <body>
@@ -66,8 +67,13 @@ function openSession(path, container) {
 	const topbar = document.createElement("div");
 	topbar.className = "topbar";
 	topbar.innerHTML = `<span class="hint">loading…</span> <button data-prev style="display:none">↑ 加载更早</button>`;
+	// 哨兵：始终是已加载内容的最顶元素。进入视口上方 240px 即触发预载——
+	// 不依赖 sticky/滚动几何，手机浏览器上确定性强
+	const sentinel = document.createElement("div");
+	sentinel.className = "sentinel";
 	container.innerHTML = "";
 	container.appendChild(topbar);
+	container.appendChild(sentinel);
 	const list = document.createElement("div");
 	container.appendChild(list);
 
@@ -123,17 +129,18 @@ function openSession(path, container) {
 		const scroller = document.scrollingElement;
 		scroller.scrollTop = scroller.scrollHeight;
 	});
-	openSession.active = state;
+	// 哨兵观察器：rootMargin 向上扩 240px，哨兵进入"视口上方 240px"区域就预载。
+	// 预载后视口锚定把哨兵推出触发区 → 自动停；再往上翻到顶 → 再次触发。到头后 disconnect。
+	const io = new IntersectionObserver(entries => {
+		for (const e of entries) {
+			if (e.isIntersecting) {
+				if (state.exhausted) { io.disconnect(); continue; }
+				loadOlder();
+			}
+		}
+	}, { rootMargin: "240px 0px 0px 0px", threshold: 0 });
+	io.observe(sentinel);
 }
-
-// 滚动监听：仅作用于最近打开的会话（调试面板场景足够），顶部 120px 内触发预载
-window.addEventListener("scroll", () => {
-	const state = openSession.active;
-	if (!state || state.loading || state.exhausted) return;
-	const bar = state.container.querySelector(".topbar");
-	if (!bar) return;
-	if (bar.getBoundingClientRect().top <= 120) state.container.querySelector("[data-prev]").click();
-}, { passive: true });
 
 (async () => {
 	const status = document.getElementById("status");
