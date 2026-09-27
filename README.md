@@ -1,5 +1,9 @@
 # @240xu/dsh-session-lazy-view
 
+> **怎么打开**：安装后访问 **`http://<dsh-web-地址>/lazyview`** 即是独立面板页；
+> DSH 宿主侧边栏没有本插件入口是**有意设计**（纯只读工具，不污染主界面）。
+> 装了 dsh-devkit 的话，**Ctrl+K** 命令面板里有「打开」入口（devkit 侧接线）。
+
 DSH web 插件：**会话惰性查看器**（纯只读）。列出 `~/.dsh/sessions` 下全部会话（只 stat 不解压），
 并可只解压任意会话文件的**最后 1–2 个 zstd 帧**快速查看最近发生的事件，不碰整份文件。
 
@@ -113,3 +117,14 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
   字符）；无法文本化的行仍按原文参与匹配。
 - 全量统计对大文件是秒级操作（每帧解压一次）；面板默认只拉 fast 统计，
   全量按需展开。
+
+## v0.2.1 评审修复
+
+- **可发现性（P0）**：README 与面板页顶部均加显著说明——面板是 `/lazyview`
+  独立页，宿主侧边栏无入口是有意设计（纯只读工具）；面板页新增
+  「复制面板链接」按钮；README 注明装了 dsh-devkit 可用 Ctrl+K 打开。
+- **S1（P1）**：360px 表格溢出修复——session id 列截断省略（`title` 悬停看全），
+  mtime 列在 ≤480px 隐藏（`hide-sm`）。
+- **S2（P2）**：全部按钮触控目标提升到 ≥44×44px。
+- **S3（P2）**：统计小节预留固定高度占位（fast→full 替换前锁定高度），防 CLS。
+- **S5（P3）**：`#status` 加 `role="status" aria-live="polite"`，读屏可闻。

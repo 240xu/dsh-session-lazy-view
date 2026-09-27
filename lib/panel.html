@@ -10,10 +10,15 @@
 	h1 { font-size: 16px; margin: 0 0 12px; }
 	h2 { font-size: 13px; margin: 18px 0 6px; color: #8ab4f8; }
 	table { border-collapse: collapse; width: 100%; }
-	td, th { padding: 3px 8px; border-bottom: 1px solid #232a35; text-align: left; white-space: nowrap; }
+	td, th { padding: 3px 8px; border-bottom: 1px solid #232a35; text-align: left; }
+	td { white-space: nowrap; }
+	/* S1：360px 防溢出——session id 截断，mtime 窄屏隐藏 */
+	td.session-id { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+	@media (max-width: 480px) { .hide-sm { display: none; } }
 	.big { color: #f28b82; font-weight: 700; }
 	.fmt { color: #81c995; }
-	button { background: #2a3342; color: #d7dde6; border: 1px solid #3a465a; border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+	/* S2：触控目标 ≥44px（视觉按钮 + 透明 hit-area 外扩） */
+	button { background: #2a3342; color: #d7dde6; border: 1px solid #3a465a; border-radius: 4px; padding: 4px 10px; min-height: 44px; min-width: 44px; cursor: pointer; box-sizing: border-box; }
 	button:hover { background: #37435a; }
 	.frame { background: #161b24; border: 1px solid #232a35; border-radius: 6px; margin: 8px 0; padding: 8px 12px; }
 	.frame .meta { color: #9aa0a6; font-size: 11px; }
@@ -30,20 +35,35 @@
 	.sentinel { height: 1px; }
 	.searchbox { background: #161b24; border: 1px solid #232a35; border-radius: 6px; margin: 8px 0; padding: 8px 12px; }
 	.searchbox input { background: #0d1117; color: #d7dde6; border: 1px solid #3a465a; border-radius: 4px; padding: 2px 8px; width: 60%; font: inherit; }
-	.sinfo { color: #9aa0a6; font-size: 11px; margin: 6px 0; }
+	/* S3：统计小节预留固定占位，fast→full 替换时内容不下跳（防 CLS） */
+	.sinfo { color: #9aa0a6; font-size: 11px; margin: 6px 0; min-height: 20px; }
 	.sinfo.loading { color: #fdd663; }
 	a[data-export] { color: #8ab4f8; margin-left: 6px; }
+	.discover { background: #1d2430; border: 1px solid #3a465a; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 12px; }
+	.discover button { min-height: 32px; min-width: 32px; padding: 2px 10px; font-size: 11px; }
 </style>
 </head>
 <body>
 <h1>dsh-session-lazy-view <span class="fmt">read-only</span></h1>
-<div id="status">loading…</div>
+<!-- P0 可发现性：本页即面板（/lazyview 独立页）；宿主无入口是有意设计（纯只读工具），devkit 装了可用 Ctrl+K 打开 -->
+<div class="discover">这是 <b>/lazyview</b> 独立面板页（纯只读查看器）。宿主侧边栏没有入口是有意设计；装了 dsh-devkit 的话可用 <b>Ctrl+K</b> 打开。 <button data-copy-link>复制面板链接</button></div>
+<div id="status" role="status" aria-live="polite">loading…</div>
 <div id="root"></div>
 <script>
 const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
 const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 // 首屏与每批帧数：8 帧足够铺满手机一屏；服务端 MAX_FRAMES=20 是硬上限
 const BATCH = 8;
+
+// P0 可发现性：复制本面板绝对 URL，方便收藏/分享（剪贴板 API 不可用时退化为 prompt）
+document.querySelector("[data-copy-link]").addEventListener("click", async () => {
+	const url = new URL("/lazyview", location.href).href;
+	try {
+		await navigator.clipboard.writeText(url);
+	} catch {
+		prompt("面板链接：", url);
+	}
+});
 
 async function api(path, signal) {
 	const res = await fetch(path, { signal });
@@ -87,6 +107,8 @@ function buildSearch(path) {
 /* 全量统计：fast=1（只数帧魔数）自动加载；按钮触发展开全量解压统计 */
 async function loadStats(path, info, full) {
 	info.textContent = full ? "统计中（全量解压，大文件需数秒）…" : "统计中…";
+	// S3 防 CLS：fast→full 高度差较大，替换前锁定当前高度，渲染后释放
+	info.style.minHeight = info.offsetHeight + "px";
 	try {
 		const v = await api(`/lazyview/api/stats?path=${encodeURIComponent(path)}${full ? "" : "&fast=1"}`);
 		const times = v.firstTime !== void 0 ? ` · 首事件 ${new Date(v.firstTime).toLocaleString()} → 末事件 ${new Date(v.lastTime).toLocaleString()}` : "";
@@ -95,6 +117,7 @@ async function loadStats(path, info, full) {
 			(v.fast ? ` <button data-full>展开全量统计</button>` : ` · ${v.events} 事件 · 坏帧 ${v.frameErrors ?? 0}${times}` + (byType ? `<div class="meta">${esc(byType)}</div>` : ""));
 		const btn = info.querySelector("[data-full]");
 		if (btn) btn.addEventListener("click", () => loadStats(path, info, true));
+		info.style.minHeight = "";
 	} catch (e) {
 		info.textContent = `stats error: ${e.message}`;
 	}
@@ -218,12 +241,12 @@ function openSession(path, container) {
 		for (const { project, sessions } of projects) {
 			const rows = sessions.map(s => {
 				const sizeCell = s.big ? `<td class="big">${fmtBytes(s.bytes)}</td>` : `<td>${fmtBytes(s.bytes)}</td>`;
-				return `<tr><td>${esc(s.sessionId)}</td><td class="fmt">${esc(s.format)}</td>${sizeCell}<td>${new Date(s.mtime).toLocaleString()}</td>` +
+				return `<tr><td class="session-id" title="${esc(s.sessionId)}">${esc(s.sessionId)}</td><td class="fmt">${esc(s.format)}</td>${sizeCell}<td class="hide-sm">${new Date(s.mtime).toLocaleString()}</td>` +
 					`<td><button data-path="${esc(s.path)}">打开</button> <button data-search="${esc(s.path)}">搜索</button></td></tr>`;
 			}).join("");
 			const section = document.createElement("details");
 			section.innerHTML = `<summary><h2 style="display:inline">${esc(project)} (${sessions.length})</h2></summary>` +
-				`<table><tr><th>session</th><th>format</th><th>size</th><th>mtime</th><th></th></tr>${rows}</table>`;
+				`<table><tr><th>session</th><th>format</th><th>size</th><th class="hide-sm">mtime</th><th></th></tr>${rows}</table>`;
 			for (const btn of section.querySelectorAll("[data-path]")) {
 				btn.addEventListener("click", () => {
 					let tail = section.querySelector(":scope > .tail");
