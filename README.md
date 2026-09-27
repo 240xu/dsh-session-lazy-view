@@ -82,3 +82,34 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
 
 用 node 直接 import `./lib/frames.js`，对 `~/.dsh/sessions` 下任一
 `.zstd` 会话执行“读最后 2 帧”，打印事件条数与首条 role。
+
+## v0.2.0 新增
+
+**仍然是纯只读**：全部新功能对 `~/.dsh/sessions` 零写入（不缓存、不落盘），
+依旧不删除、不归档、不碰任何侧边栏注册面——所有能力都挂在自己的
+`/lazyview/*` HTTP 端点与 panel.html 面板里。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /lazyview/api/search?path=&q=&max=20` | 会话内全文搜索：流式逐帧解压做大小写不敏感子串匹配，命中返回 `{frameIndex, seq, type, role, snippet}`（命中点前后各 60 字符窗口）。达 `max` 截断；默认最多扫 500 帧，未扫完返回 `partial:true`。每帧之间 `setImmediate` 让出事件循环，客户端断开（AbortSignal）即中止扫描 |
+| `GET /lazyview/api/stats?path=[&fast=1]` | 会话统计：帧数、总事件数、按 type 分组计数、首/末事件时间、文件字节数、session header。`fast=1` 只流式扫描帧魔数（不解压、内存有界）给帧数/字节数 |
+| `GET /lazyview/api/export?path=&frames=N` | 把最近 N 帧（≤20）导出为 Markdown 文本下载（`Content-Disposition: attachment`）。文本在内存中生成直接响应，不写任何文件 |
+
+面板集成：每个会话行新增「搜索」按钮（展开输入框 + 命中结果列表，命中
+标注帧号/seq/type/片段，新搜索自动取消上一次）；打开会话顶部新增「统计」
+小节（先展示 fast 帧数/字节，按钮展开全量解压统计）与「导出 md」下载链接。
+
+测试：`node --test test/`（零依赖，用 `node:zlib` 自造多帧 fixture，
+覆盖搜索命中/截断/abort、stats 分组、export 渲染）。
+
+性能取舍说明：
+
+- 解压是同步的（`zstdDecompressSync`），全量扫描在帧与帧之间用
+  `setImmediate` 让出事件循环（参照 dsh-src `ZSTD_DECODE_YIELD_INTERVAL_MS`
+  思路），单个大文件的搜索/统计不会长时间阻塞 web server；但**一次请求
+  内整份文件会被读进内存**（read-only，读完即释放），超大文件请优先
+  `?fast=1` 或改用 tail。
+- 搜索只覆盖事件文本化后的可见文本（`describeEvent`，单条截断到 2000
+  字符）；无法文本化的行仍按原文参与匹配。
+- 全量统计对大文件是秒级操作（每帧解压一次）；面板默认只拉 fast 统计，
+  全量按需展开。

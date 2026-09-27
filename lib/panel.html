@@ -28,6 +28,11 @@
 	.topbar { background: #11151c; padding: 4px 0; color: #9aa0a6; font-size: 11px; }
 	.topbar.loading { color: #fdd663; }
 	.sentinel { height: 1px; }
+	.searchbox { background: #161b24; border: 1px solid #232a35; border-radius: 6px; margin: 8px 0; padding: 8px 12px; }
+	.searchbox input { background: #0d1117; color: #d7dde6; border: 1px solid #3a465a; border-radius: 4px; padding: 2px 8px; width: 60%; font: inherit; }
+	.sinfo { color: #9aa0a6; font-size: 11px; margin: 6px 0; }
+	.sinfo.loading { color: #fdd663; }
+	a[data-export] { color: #8ab4f8; margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -40,11 +45,59 @@ const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", 
 // 首屏与每批帧数：8 帧足够铺满手机一屏；服务端 MAX_FRAMES=20 是硬上限
 const BATCH = 8;
 
-async function api(path) {
-	const res = await fetch(path);
+async function api(path, signal) {
+	const res = await fetch(path, { signal });
 	const body = await res.json();
 	if (!body.ok) throw new Error(body.error?.code + ": " + body.error?.message);
 	return body.value;
+}
+
+/* 会话内搜索：输入 + 结果列表；新搜索会 abort 上一次（AbortSignal 透传到服务端逐帧扫描） */
+function buildSearch(path) {
+	const box = document.createElement("div");
+	box.className = "searchbox";
+	box.innerHTML = `<div class="sbar"><input type="text" placeholder="会话内全文搜索…" aria-label="search"><button>搜索</button></div><div class="sinfo"></div><div class="sres"></div>`;
+	const input = box.querySelector("input");
+	const info = box.querySelector(".sinfo");
+	const res = box.querySelector(".sres");
+	let ac = null;
+	async function run() {
+		const q = input.value.trim();
+		if (!q) return;
+		if (ac) ac.abort();
+		ac = new AbortController();
+		info.textContent = "searching…";
+		res.innerHTML = "";
+		try {
+			const v = await api(`/lazyview/api/search?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&max=20`, ac.signal);
+			info.textContent = `${v.hits.length} 命中 · 扫描 ${v.scannedFrames}/${v.totalFrames} 帧` +
+				(v.partial ? " · partial（达帧数上限截断）" : "") + (v.aborted ? " · aborted" : "");
+			res.innerHTML = v.hits.length ? v.hits.map(h =>
+				`<div class="ev"><span class="ty">f#${h.frameIndex}</span> <span class="role">${esc(h.type)}</span>${h.seq !== void 0 ? " seq " + h.seq : ""} ${esc(h.snippet)}</div>`
+			).join("") : `<div class="sinfo">无命中</div>`;
+		} catch (e) {
+			info.textContent = e.name === "AbortError" ? "已取消" : `error: ${e.message}`;
+		}
+	}
+	box.querySelector("button").addEventListener("click", run);
+	input.addEventListener("keydown", e => { if (e.key === "Enter") run(); });
+	return box;
+}
+
+/* 全量统计：fast=1（只数帧魔数）自动加载；按钮触发展开全量解压统计 */
+async function loadStats(path, info, full) {
+	info.textContent = full ? "统计中（全量解压，大文件需数秒）…" : "统计中…";
+	try {
+		const v = await api(`/lazyview/api/stats?path=${encodeURIComponent(path)}${full ? "" : "&fast=1"}`);
+		const times = v.firstTime !== void 0 ? ` · 首事件 ${new Date(v.firstTime).toLocaleString()} → 末事件 ${new Date(v.lastTime).toLocaleString()}` : "";
+		const byType = v.typeCounts ? Object.entries(v.typeCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t}:${n}`).join(", ") : "";
+		info.innerHTML = `${fmtBytes(v.bytes)} · ${v.totalFrames} 帧` +
+			(v.fast ? ` <button data-full>展开全量统计</button>` : ` · ${v.events} 事件 · 坏帧 ${v.frameErrors ?? 0}${times}` + (byType ? `<div class="meta">${esc(byType)}</div>` : ""));
+		const btn = info.querySelector("[data-full]");
+		if (btn) btn.addEventListener("click", () => loadStats(path, info, true));
+	} catch (e) {
+		info.textContent = `stats error: ${e.message}`;
+	}
 }
 
 function renderFrame(frame) {
@@ -66,13 +119,17 @@ function openSession(path, container) {
 	const state = { path, container, skip: 0, oldestLoaded: null, loading: false, exhausted: false };
 	const topbar = document.createElement("div");
 	topbar.className = "topbar";
-	topbar.innerHTML = `<span class="hint">loading…</span> <button data-prev style="display:none">↑ 加载更早</button>`;
+	topbar.innerHTML = `<span class="hint">loading…</span> <button data-prev style="display:none">↑ 加载更早</button> <button data-stats>统计</button> <a data-export download>导出 md</a>`;
+	const statsInfo = document.createElement("div");
+	statsInfo.className = "sinfo meta";
+	statsInfo.hidden = true;
 	// 哨兵：始终是已加载内容的最顶元素。进入视口上方 240px 即触发预载——
 	// 不依赖 sticky/滚动几何，手机浏览器上确定性强
 	const sentinel = document.createElement("div");
 	sentinel.className = "sentinel";
 	container.innerHTML = "";
 	container.appendChild(topbar);
+	container.appendChild(statsInfo);
 	container.appendChild(sentinel);
 	const list = document.createElement("div");
 	container.appendChild(list);
@@ -123,6 +180,15 @@ function openSession(path, container) {
 	}
 
 	prevBtn.addEventListener("click", loadOlder);
+	// 统计小节：点开时先拉 fast 统计（流式数帧魔数，不解压），按钮再展开全量
+	topbar.querySelector("[data-stats]").addEventListener("click", () => {
+		statsInfo.hidden = !statsInfo.hidden;
+		if (!statsInfo.hidden && statsInfo.dataset.loaded !== "1") {
+			statsInfo.dataset.loaded = "1";
+			loadStats(path, statsInfo, false);
+		}
+	});
+	topbar.querySelector("[data-export]").href = `/lazyview/api/export?path=${encodeURIComponent(path)}&frames=${BATCH}`;
 	// 首屏：载入最新 BATCH 帧，然后滚到内容底部（最新），用户往上翻即触发预载
 	loadOlder().then(() => {
 		container.scrollIntoView({ block: "start" });
@@ -153,7 +219,7 @@ function openSession(path, container) {
 			const rows = sessions.map(s => {
 				const sizeCell = s.big ? `<td class="big">${fmtBytes(s.bytes)}</td>` : `<td>${fmtBytes(s.bytes)}</td>`;
 				return `<tr><td>${esc(s.sessionId)}</td><td class="fmt">${esc(s.format)}</td>${sizeCell}<td>${new Date(s.mtime).toLocaleString()}</td>` +
-					`<td><button data-path="${esc(s.path)}">打开</button></td></tr>`;
+					`<td><button data-path="${esc(s.path)}">打开</button> <button data-search="${esc(s.path)}">搜索</button></td></tr>`;
 			}).join("");
 			const section = document.createElement("details");
 			section.innerHTML = `<summary><h2 style="display:inline">${esc(project)} (${sessions.length})</h2></summary>` +
@@ -163,6 +229,14 @@ function openSession(path, container) {
 					let tail = section.querySelector(":scope > .tail");
 					if (!tail) { tail = document.createElement("div"); tail.className = "tail"; section.appendChild(tail); }
 					openSession(btn.dataset.path, tail);
+				});
+			}
+			for (const btn of section.querySelectorAll("[data-search]")) {
+				btn.addEventListener("click", () => {
+					let box = section.querySelector(":scope > .searchbox");
+					if (!box) { box = buildSearch(btn.dataset.search); section.appendChild(box); }
+					box.hidden = !box.hidden;
+					if (!box.hidden) box.querySelector("input").focus();
 				});
 			}
 			root.appendChild(section);
