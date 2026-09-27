@@ -41,6 +41,18 @@
 	a[data-export] { color: #8ab4f8; margin-left: 6px; }
 	.discover { background: #1d2430; border: 1px solid #3a465a; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 12px; }
 	.discover button { min-height: 32px; min-width: 32px; padding: 2px 10px; font-size: 11px; }
+	/* Timeline 视图（v0.3.0）：按 turn 分组折叠 + 遮蔽标注 + 深链高亮 */
+	.tgroup { background: #161b24; border: 1px solid #232a35; border-radius: 6px; margin: 8px 0; }
+	.tgroup .ghead { padding: 8px 12px; cursor: pointer; color: #8ab4f8; }
+	.tgroup .ghead b { color: #fdd663; }
+	.tgroup .gsum { padding: 0 12px 8px; color: #9aa0a6; font-size: 11px; }
+	.tgroup .gbody { padding: 0 12px 8px; }
+	.tgroup:not(.open) .gbody { display: none; }
+	.tgroup.open .gsum { display: none; }
+	.ev.masked { opacity: 0.55; }
+	.ev.masked .badge { color: #9aa0a6; font-style: italic; }
+	.ev.target { outline: 1px solid #fdd663; border-radius: 4px; }
+	.topbar button.active { background: #37435a; border-color: #8ab4f8; }
 </style>
 </head>
 <body>
@@ -48,6 +60,7 @@
 <!-- P0 可发现性：本页即面板（/lazyview 独立页）；宿主无入口是有意设计（纯只读工具），devkit 装了可用 Ctrl+K 打开 -->
 <div class="discover">这是 <b>/lazyview</b> 独立面板页（纯只读查看器）。宿主侧边栏没有入口是有意设计；装了 dsh-devkit 的话可用 <b>Ctrl+K</b> 打开。 <button data-copy-link>复制面板链接</button></div>
 <div id="status" role="status" aria-live="polite">loading…</div>
+<!--TIMELINE_LIB-->
 <div id="root"></div>
 <script>
 const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
@@ -138,11 +151,11 @@ function renderFrame(frame) {
  * 首屏渲染后滚到最新；用户滚近顶部时自动预载更早一批并锚定视口。
  * 手动按钮保留作兜底（滚动监听失效的场景，如老浏览器）。
  */
-function openSession(path, container) {
+function openSession(path, container, opts = {}) {
 	const state = { path, container, skip: 0, oldestLoaded: null, loading: false, exhausted: false };
 	const topbar = document.createElement("div");
 	topbar.className = "topbar";
-	topbar.innerHTML = `<span class="hint">loading…</span> <button data-prev style="display:none">↑ 加载更早</button> <button data-stats>统计</button> <a data-export download>导出 md</a>`;
+	topbar.innerHTML = `<span class="hint">loading…</span> <button data-prev style="display:none">↑ 加载更早</button> <button data-stats>统计</button> <button data-timeline>时间线</button> <a data-export download>导出 md</a>`;
 	const statsInfo = document.createElement("div");
 	statsInfo.className = "sinfo meta";
 	statsInfo.hidden = true;
@@ -212,11 +225,85 @@ function openSession(path, container) {
 		}
 	});
 	topbar.querySelector("[data-export]").href = `/lazyview/api/export?path=${encodeURIComponent(path)}&frames=${BATCH}`;
+
+	// -- Timeline 模式（v0.3.0）：与帧流互斥。数据复用 /api/tail 翻页到文件头，
+	//    反转为正序后 applySurfaceOps → buildGroups 渲染折叠组。
+	const tl = document.createElement("div");
+	tl.hidden = true;
+	container.appendChild(tl);
+	const tlBtn = topbar.querySelector("[data-timeline]");
+	const groupOpen = new Map(); // 折叠状态存内存，重建时间线时恢复
+	state.mode = "frames";
+	const setMode = (mode) => {
+		state.mode = mode;
+		list.hidden = mode === "timeline";
+		tl.hidden = mode !== "timeline";
+		tlBtn.classList.toggle("active", mode === "timeline");
+	};
+	const eventHtml = (ev) =>
+		`<div class="ev${ev.masked ? " masked" : ""}" data-seq="${ev.seq ?? ""}">` +
+		`<span class="role">${esc(ev.role)}</span> <span class="ty">${esc(ev.type)}/${esc(ev.kind)}</span> ${esc(ev.text)}` +
+		(ev.masked ? ` <span class="badge">已遮蔽</span>` : "") + `</div>`;
+	async function buildTimeline(targetSeq) {
+		tlBtn.disabled = true;
+		setHint("时间线：加载全量事件…", true);
+		try {
+			const frames = [];
+			let skip = 0;
+			for (;;) {
+				const v = await api(`/lazyview/api/tail?path=${encodeURIComponent(path)}&frames=${BATCH}&skip=${skip}`);
+				frames.push(...v.frames);
+				if (v.frames.length < BATCH || (skip += BATCH) > 1600) break; // 上限 ~1600 帧，防极端文件无限翻页
+			}
+			// tail 按 newest-first 给帧；反转为时间正序后拼接事件
+			const events = frames.slice().reverse().flatMap((f) => f.events ?? []);
+			Timeline.applySurfaceOps(events);
+			const groups = Timeline.buildGroups(events);
+			tl.innerHTML = groups.map(g =>
+				`<div class="tgroup" data-g="${g.index}">` +
+				`<div class="ghead"><b>turn ${g.index}</b> · ${g.startTime !== void 0 ? new Date(g.startTime).toLocaleString() : "—"} · ${g.count} 事件</div>` +
+				`<div class="gsum">${esc(g.summary) || "（空组）"}</div>` +
+				`<div class="gbody">${g.events.map(eventHtml).join("")}</div></div>`
+			).join("");
+			for (const head of tl.querySelectorAll(".ghead")) {
+				const group = head.parentElement;
+				group.classList.toggle("open", groupOpen.get(group.dataset.g) === true);
+				head.addEventListener("click", () => {
+					const open = group.classList.toggle("open");
+					groupOpen.set(group.dataset.g, open);
+				});
+			}
+			setMode("timeline");
+			setHint(`时间线：${groups.length} 组 · ${events.length} 事件（seq 正序）`, false);
+			// Go to Message：定位 seq≥target 的第一个事件，展开所在组并高亮
+			if (targetSeq != null) {
+				const el = [...tl.querySelectorAll("[data-seq]")].find((n) => Number(n.dataset.seq) >= targetSeq);
+				if (el) {
+					el.closest(".tgroup").classList.add("open");
+					groupOpen.set(el.closest(".tgroup").dataset.g, true);
+					el.classList.add("target");
+					el.scrollIntoView({ block: "center" });
+				}
+			}
+		} catch (error) {
+			setHint(`timeline error: ${error.message}`, false);
+			setMode("frames");
+		} finally {
+			tlBtn.disabled = false;
+		}
+	}
+	tlBtn.addEventListener("click", () => {
+		if (state.mode === "timeline") { setMode("frames"); return; }
+		if (!tl.dataset.built) { tl.dataset.built = "1"; buildTimeline(null); }
+		else setMode("timeline");
+	});
 	// 首屏：载入最新 BATCH 帧，然后滚到内容底部（最新），用户往上翻即触发预载
 	loadOlder().then(() => {
 		container.scrollIntoView({ block: "start" });
 		const scroller = document.scrollingElement;
 		scroller.scrollTop = scroller.scrollHeight;
+		// 深链直达：?session=&seq= 打开即进时间线模式并定位
+		if (opts.timeline) buildTimeline(opts.targetSeq ?? null);
 	});
 	// 哨兵观察器：rootMargin 向上扩 240px，哨兵进入"视口上方 240px"区域就预载。
 	// 预载后视口锚定把哨兵推出触发区 → 自动停；再往上翻到顶 → 再次触发。到头后 disconnect。
@@ -236,6 +323,9 @@ function openSession(path, container) {
 	const root = document.getElementById("root");
 	try {
 		const { projects } = await api("/lazyview/api/list");
+		// 深链解析（Go to Message）：?session=<id>&seq=<n>
+		const link = window.Timeline.parseDeepLink(location.search);
+		let deepLinkConsumed = false;
 		const total = projects.reduce((n, p) => n + p.sessions.length, 0);
 		status.textContent = `${projects.length} projects · ${total} sessions · 点击 session 打开（新窗口语义：打开即看最新，滚到顶部自动加载更早）`;
 		for (const { project, sessions } of projects) {
@@ -254,6 +344,12 @@ function openSession(path, container) {
 					openSession(btn.dataset.path, tail);
 				});
 			}
+			// Go to Message 深链：?session=<id>&seq=<n> 自动打开对应会话并进时间线
+			if (link && s.sessionId === link.session) {
+				const openBtn = section.querySelector("[data-path]");
+				if (openBtn) openBtn.click();
+				deepLinkConsumed = true;
+			}
 			for (const btn of section.querySelectorAll("[data-search]")) {
 				btn.addEventListener("click", () => {
 					let box = section.querySelector(":scope > .searchbox");
@@ -263,6 +359,9 @@ function openSession(path, container) {
 				});
 			}
 			root.appendChild(section);
+		}
+		if (link && !deepLinkConsumed) {
+			status.textContent += ` · 深链会话 "${link.session}" 未找到`;
 		}
 	} catch (error) {
 		status.innerHTML = `<span class="err">${esc(error.message)}</span>`;

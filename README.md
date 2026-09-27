@@ -128,3 +128,20 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
 - **S2（P2）**：全部按钮触控目标提升到 ≥44×44px。
 - **S3（P2）**：统计小节预留固定高度占位（fast→full 替换前锁定高度），防 CLS。
 - **S5（P3）**：`#status` 加 `role="status" aria-live="polite"`，读屏可闻。
+
+## v0.3.0 Timeline 视图
+
+按 turn 分组的正序事件时间线（vscode Timeline 式阅读投影），设计文档见
+`timeline-design.md`：
+
+- 会话打开视图顶部新增「时间线」按钮，与帧流互斥切换；数据复用
+  `/api/tail` 翻页到文件头后按 seq 正序拼接（无需新端点）。
+- 分组规则：有 `turn/start` 事件时它开新组；历史格式以 `user/message`
+  为组边界。组默认折叠一行摘要，展开显示全部事件；折叠状态存内存。
+- Go to Message 深链：`/lazyview?session=<id>&seq=<n>` 自动打开会话、
+  进时间线、展开目标组并高亮首个 seq≥n 的事件。
+- message-ops 遮蔽标注：事件自带 `surfaceOp`（op:"replace"）时，被替换
+  区间内的事件在时间线上渲染为半透明 +「已遮蔽」徽标；纯本地计算，
+  不依赖 message-ops 端点。只读铁律不变。
+- 纯函数（深链解析 / 遮蔽计算 / 分组）抽到 `lib/timeline.js`，一份两用：
+  ESM 供测试，服务端剥 export 内联进面板。
