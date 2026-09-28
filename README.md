@@ -145,3 +145,12 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
   不依赖 message-ops 端点。只读铁律不变。
 - 纯函数（深链解析 / 遮蔽计算 / 分组）抽到 `lib/timeline.js`，一份两用：
   ESM 供测试，服务端剥 export 内联进面板。
+
+## v0.3.2 v4 会话支持
+
+- 用户实测发现：DSH 新会话写 `session.v4.jsonl.zstd`（帧 0 header
+  `version:4`），面板此前只探测 v3/legacy，新会话全部不可见。
+- 修复：artifact 名单统一抽到 `lib/artifact.js`（`session.vN.jsonl.zstd`
+  形状正则），目录探测与 `?path=` 校验共用；未来新版本号自动纳入，
+  frames.js 无版本硬校验（header.version 原样透传），无需再改。
+- 面板 format 列区分 `v4-multiframe` / `v3-multiframe` / `legacy-single-frame`。
