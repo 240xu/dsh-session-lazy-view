@@ -103,7 +103,7 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
 标注帧号/seq/type/片段，新搜索自动取消上一次）；打开会话顶部新增「统计」
 小节（先展示 fast 帧数/字节，按钮展开全量解压统计）与「导出 md」下载链接。
 
-测试：`node --test test/`（零依赖，用 `node:zlib` 自造多帧 fixture，
+测试：`npm test`（即 `node --test "test/*.test.js"`；零依赖，用 `node:zlib` 自造多帧 fixture，
 覆盖搜索命中/截断/abort、stats 分组、export 渲染）。
 
 性能取舍说明：
