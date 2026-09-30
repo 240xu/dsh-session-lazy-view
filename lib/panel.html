@@ -44,6 +44,7 @@
 	/* Timeline 视图（v0.3.0）：按 turn 分组折叠 + 遮蔽标注 + 深链高亮 */
 	.tgroup { background: #161b24; border: 1px solid #232a35; border-radius: 6px; margin: 8px 0; }
 	.tgroup .ghead { padding: 8px 12px; cursor: pointer; color: #8ab4f8; }
+	.tgroup .ghead:focus-visible { outline: 1px solid #8ab4f8; }
 	.tgroup .ghead b { color: #fdd663; }
 	.tgroup .gsum { padding: 0 12px 8px; color: #9aa0a6; font-size: 11px; }
 	.tgroup .gbody { padding: 0 12px 8px; }
@@ -261,17 +262,24 @@ function openSession(path, container, opts = {}) {
 			const groups = Timeline.buildGroups(events);
 			tl.innerHTML = groups.map(g =>
 				`<div class="tgroup" data-g="${g.index}">` +
-				`<div class="ghead"><b>turn ${g.index}</b> · ${g.startTime !== void 0 ? new Date(g.startTime).toLocaleString() : "—"} · ${g.count} 事件</div>` +
+				`<div class="ghead" role="button" tabindex="0" aria-expanded="false"><b>turn ${g.index}</b> · ${g.startTime !== void 0 ? new Date(g.startTime).toLocaleString() : "—"} · ${g.count} 事件</div>` +
 				`<div class="gsum">${esc(g.summary) || "（空组）"}</div>` +
 				`<div class="gbody">${g.events.map(eventHtml).join("")}</div></div>`
 			).join("");
 			for (const head of tl.querySelectorAll(".ghead")) {
 				const group = head.parentElement;
-				group.classList.toggle("open", groupOpen.get(group.dataset.g) === true);
-				head.addEventListener("click", () => {
-					const open = group.classList.toggle("open");
+				const setOpen = (open) => {
+					group.classList.toggle("open", open);
+					head.setAttribute("aria-expanded", String(open));
 					groupOpen.set(group.dataset.g, open);
+				};
+				// G-L1：键盘可达——Enter/Space 与点击同义，aria-expanded 同步折叠态
+				const toggle = () => setOpen(!group.classList.contains("open"));
+				head.addEventListener("click", toggle);
+				head.addEventListener("keydown", (e) => {
+					if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
 				});
+				setOpen(groupOpen.get(group.dataset.g) === true);
 			}
 			setMode("timeline");
 			setHint(`时间线：${groups.length} 组 · ${events.length} 事件（seq 正序）`, false);

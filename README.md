@@ -154,3 +154,8 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
   形状正则），目录探测与 `?path=` 校验共用；未来新版本号自动纳入，
   frames.js 无版本硬校验（header.version 原样透传），无需再改。
 - 面板 format 列区分 `v4-multiframe` / `v3-multiframe` / `legacy-single-frame`。
+
+## v0.3.3 可访问性补齐
+
+- 时间线分组折叠头（.ghead）从纯点击 div 改为键盘可达：`role="button"`
+  + `tabindex="0"` + Enter/Space 触发 + `aria-expanded` 与折叠 Map 同步。
