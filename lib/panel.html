@@ -65,7 +65,10 @@
 <div id="root"></div>
 <script>
 const fmtBytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
-const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+// 0.3.4（P2 修复）：esc 必须转义引号——session-id 的 title="…" 与 data-path="…" 是
+// 双引号属性，而 listSessions 不校验目录名（无 UUID 正则）→ 本地进程可造
+// session-x"onmouseover="… 目录做存储型属性逃逸。session-search 的 esc 已转引号，此处补齐。
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 首屏与每批帧数：8 帧足够铺满手机一屏；服务端 MAX_FRAMES=20 是硬上限
 const BATCH = 8;
 
@@ -353,8 +356,15 @@ function openSession(path, container, opts = {}) {
 				});
 			}
 			// Go to Message 深链：?session=<id>&seq=<n> 自动打开对应会话并进时间线
-			if (link && s.sessionId === link.session) {
-				const openBtn = section.querySelector("[data-path]");
+			// 0.3.4（P1 修复）：原实现在 sessions.map 回调外引用回调参数 s —— 带 ?session
+			// 的访问 100% ReferenceError（`s is not defined`）被外层 catch 吞掉 → 列表白屏。
+			// 改为在本 project 的 sessions 里匹配，再从表格行定位该会话的打开按钮。
+			if (link && sessions.some(x => x.sessionId === link.session)) {
+				const targetRow = Array.from(section.querySelectorAll("tr")).find(tr => {
+					const cell = tr.querySelector(".session-id");
+					return cell && cell.textContent === link.session;
+				});
+				const openBtn = targetRow ? targetRow.querySelector("[data-path]") : null;
 				if (openBtn) openBtn.click();
 				deepLinkConsumed = true;
 			}

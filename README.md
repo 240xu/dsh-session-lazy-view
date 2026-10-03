@@ -159,3 +159,14 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
 
 - 时间线分组折叠头（.ghead）从纯点击 div 改为键盘可达：`role="button"`
   + `tabindex="0"` + Enter/Space 触发 + `aria-expanded` 与折叠 Map 同步。
+
+## 0.3.4 · Bug 猎场修复
+
+- **[P1] 深链白屏**：`?session=` 访问在 `sessions.map` 回调外引用回调参数 `s` →
+  ReferenceError 被 catch 吞掉，面板一个会话都不渲染（0.3.0–0.3.3 全中）。改为在
+  project 的 sessions 内匹配 + 表格行定位打开按钮。
+- **[P1] 遮蔽标注失效**：applySurfaceOps 只认 `fromSeq/toSeq`（message-ops 从没写过
+  这种拼写）——真实数据是 `start/end`（新引擎）与 `startSeq/endSeq`（legacy）。三拼写
+  全兼容 + 真实拼写回归测试（原测试只喂假拼写 = 假绿）。
+- **[P2] esc 补转义引号**：`title="…"`/`data-path="…"` 是双引号属性而 listSessions
+  不校验目录名 → 本地目录名可属性逃逸存储型 XSS。

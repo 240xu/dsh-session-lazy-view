@@ -70,3 +70,27 @@ test("buildGroups sorts by seq ascending and keeps meta per group", () => {
 	assert.equal(out[0].events[1].text, "order check");
 	assert.equal(out[0].count, 3);
 });
+
+test("applySurfaceOps：真实 message-ops 拼写 start/end 与 startSeq/endSeq 均标遮蔽", async () => {
+  const { applySurfaceOps } = await import("../lib/timeline.js");
+  const evs = [
+    { seq: 10, message: { role: "user" } },
+    { seq: 11, message: { role: "assistant" } },
+    { seq: 12, message: { role: "assistant" } },
+    { seq: 13, message: { role: "assistant" } },
+    { seq: 20, message: { role: "assistant" } },
+    { seq: 21, message: { role: "assistant" } },
+  ];
+  // 新引擎拼写 {start,end}（ops-core.js 现行）
+  evs.push({ seq: 14, surfaceOp: { op: "replace", start: 11, end: 13 }, message: { role: "system" } });
+  // legacy 拼写 {startSeq,endSeq}
+  evs.push({ seq: 22, surfaceOp: { op: "replace", startSeq: 20, endSeq: 21 }, message: { role: "system" } });
+  const out = applySurfaceOps(evs);
+  const bySeq = new Map(out.map((e) => [e.seq, e]));
+  assert.equal(bySeq.get(11).masked, true, "start/end 区间内遮蔽");
+  assert.equal(bySeq.get(12).masked, true);
+  assert.equal(bySeq.get(13).masked, true);
+  assert.equal(bySeq.get(20).masked, true, "startSeq/endSeq 区间内遮蔽");
+  assert.equal(bySeq.get(21).masked, true);
+  assert.ok(!bySeq.get(10).masked, "区间外不遮蔽");
+});
