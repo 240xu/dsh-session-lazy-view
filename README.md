@@ -170,3 +170,11 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
   全兼容 + 真实拼写回归测试（原测试只喂假拼写 = 假绿）。
 - **[P2] esc 补转义引号**：`title="…"`/`data-path="…"` 是双引号属性而 listSessions
   不校验目录名 → 本地目录名可属性逃逸存储型 XSS。
+
+## 0.3.5 · frames.js 两个实测 bug（P2×2）
+
+- **EOF 死循环**：forEachFrame 读到 0 字节（stat 后并发截断）永不推进 → search/stats
+  请求悬挂 + fs 空转可拖垮 web 进程 → 0 字节即停。
+- **countFrames carry 丢字节**：每轮全零新缓冲从未拷入上轮 3 字节 carry → 跨 1MB
+  边界 zstd magic 全漏计（实测 magic@边界 count=0 应 1）→ `?fast=1` 对 >1MB 文件
+  系统性偏低。回归测试在原代码上实证红（15/1 → 16/16）。

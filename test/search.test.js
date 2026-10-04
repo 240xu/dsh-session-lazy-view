@@ -9,6 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtempSync, writeFileSync, rmSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
@@ -152,4 +153,46 @@ test("framesToMarkdown renders a text document without touching disk", async () 
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
+});
+
+test("countFrames：跨 1MB 边界的 zstd magic 不丢（carry 必须拷入新缓冲）", async () => {
+  const { countFrames } = await import("../lib/frames.js");
+  const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+  const CHUNK = 1 << 20;
+  const dir = mkdtempSync(join(tmpdir(), "slv-carry-"));
+  // 单块文件：magic 起点 3 种边界位置
+  const single = [
+    { name: "cross-2", at: CHUNK - 2 },
+    { name: "cross-3", at: CHUNK - 3 },
+    { name: "at-chunk", at: CHUNK },
+  ];
+  for (const c of single) {
+    const buf = Buffer.alloc(CHUNK + 64, 0x00);
+    MAGIC.copy(buf, c.at);
+    const f = join(dir, c.name + ".bin");
+    writeFileSync(f, buf);
+    assert.equal(await countFrames(f), 1, c.name);
+  }
+  // 两块文件：两个 magic 各跨一个边界
+  const big = Buffer.alloc(CHUNK * 2 + 64, 0x00);
+  MAGIC.copy(big, CHUNK - 1);
+  MAGIC.copy(big, CHUNK * 2 - 2);
+  const f2 = join(dir, "two.bin");
+  writeFileSync(f2, big);
+  assert.equal(await countFrames(f2), 2, "两个跨边界 magic 都计数");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("forEachFrame：文件被并发截断（bytesRead=0）不死循环，正常返回", async () => {
+  const { forEachFrame } = await import("../lib/frames.js");
+  const dir = mkdtempSync(join(tmpdir(), "slv-eof-"));
+  const f = join(dir, "s.bin");
+  writeFileSync(f, Buffer.alloc(1024, 0x11));
+  truncateSync(f, 100);
+  const raced = await Promise.race([
+    (async () => { await forEachFrame(f, {}); return "resolved"; })(),
+    new Promise((_r, rej) => setTimeout(() => rej(new Error("HUNG")), 3000)),
+  ]);
+  assert.equal(raced, "resolved");
+  rmSync(dir, { recursive: true, force: true });
 });
