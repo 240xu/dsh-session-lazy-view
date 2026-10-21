@@ -1,13 +1,25 @@
 # @240xu/dsh-session-lazy-view
 
-> **怎么打开**：安装后访问 **`http://<dsh-web-地址>/lazyview`** 即是独立面板页（无需找侧边栏入口）；
+> **怎么打开**：安装后访问 **`http://<dsh-web-地址>/lazyview`** 即是独立面板页；
 > DSH 宿主侧边栏没有本插件入口是**有意设计**（纯只读工具，不污染主界面）。
-> 装了 dsh-devkit 的话，**Ctrl+K** 命令面板里有「打开」入口（devkit 侧接线）。
+> 可选：若你另装了 dsh-devkit，**Ctrl+K** 命令面板里会有「打开」入口；没装也不影响本插件。
 
 DSH web 插件：**会话惰性查看器**（纯只读）。列出 `~/.dsh/sessions` 下全部会话（只 stat 不解压），
 并可只解压任意会话文件的**最后 1–2 个 zstd 帧**快速查看最近发生的事件，不碰整份文件。
 
 不做删除、不做归档、不是 Trajectory 替代品；对 `~/.dsh/sessions` 零写入。
+
+
+## 10 秒速查
+
+```sh
+dsh plugin --profile web add @240xu/dsh-session-lazy-view
+# 重启后直接访问 http://<dsh-web-地址>/lazyview
+```
+
+- 纯只读：不删除、不归档、不写 `~/.dsh/sessions`
+- 不想逐个装：`dsh plugin --profile web add @240xu/dsh-plugin-hub`
+- 卸载：`dsh plugin --profile web remove @240xu/dsh-session-lazy-view`
 
 ## 原理
 
@@ -60,9 +72,6 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
 | `GET /lazyview` | HTML 面板：按项目分组列出会话，>10MB 标红，每行 tail 按钮展开最近 2 帧，支持“上一页” |
 | `GET /lazyview/api/list` | JSON：`{root, projects:[{project, sessions:[{sessionId, path, artifact, format, bytes, mtime, big}]}]}`，纯 stat |
 | `GET /lazyview/api/tail?path=<相对路径>&frames=2&skip=0` | JSON：从尾部解压 `frames` 帧；`skip` 为翻页偏移（跳过最新 skip 帧后再取 frames 帧）。帧内事件已文本化（role + 截断到 2000 字符的 text / tool-call / tool-result） |
-| `GET /lazyview/api/search?path=<相对路径>&q=<关键词>&max=20` | 在**单个会话**内全文检索；逐帧解压并在帧间让出事件循环，客户端断开即中止 |
-| `GET /lazyview/api/stats?path=<相对路径>&fast=1` | 会话统计；`fast=1` 只数帧魔数和字节，默认解压全部帧统计事件类型 |
-| `GET /lazyview/api/export?path=<相对路径>&frames=2` | 把最近 N 帧导出为 Markdown 下载；内存生成，不写会话目录 |
 
 `path` 必须是 `/api/list` 返回的 `path`（相对 sessions 根，且必须以
 `session.v3.jsonl.zstd` 或 `session.jsonl.zstd` 结尾）；路径逃逸检查在服务端。
@@ -90,7 +99,11 @@ git clone https://github.com/240xu/dsh-session-lazy-view && cp -r dsh-session-la
 用 node 直接 import `./lib/frames.js`，对 `~/.dsh/sessions` 下任一
 `.zstd` 会话执行“读最后 2 帧”，打印事件条数与首条 role。
 
-## v0.2.0 新增（端点细节）
+## v0.2.0 新增
+
+**仍然是纯只读**：全部新功能对 `~/.dsh/sessions` 零写入（不缓存、不落盘），
+依旧不删除、不归档、不碰任何侧边栏注册面——所有能力都挂在自己的
+`/lazyview/*` HTTP 端点与 panel.html 面板里。
 
 | 端点 | 说明 |
 |---|---|
